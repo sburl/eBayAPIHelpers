@@ -1,24 +1,31 @@
-# eBay Auth
+# eBay API Helpers
 
 A Python library for eBay OAuth authentication and the Browse API.
 
 ## Installation
 
 ```bash
-pip install git+https://github.com/sburl/eBayOauth.git
+pip install git+https://github.com/sburl/eBayAPIHelpers.git
 ```
 
 ## Configuration
 
-Create a `.env` file with your eBay credentials:
+Create a `.env` file with your eBay API credentials:
 
 ```env
 EBAY_APP_ID=your_app_id
 EBAY_CLIENT_SECRET=your_client_secret
-EBAY_DEV_ID=your_dev_id
-EBAY_USER_TOKEN=your_oauth_token
-EBAY_REFRESH_TOKEN=your_refresh_token
 ```
+
+### Getting OAuth Tokens
+
+Run the token generation script to authenticate with eBay:
+
+```bash
+python -m shared_ebay.generate_token
+```
+
+This opens a browser for eBay authorization and saves your tokens to `.env`. Tokens refresh automatically.
 
 ## Usage
 

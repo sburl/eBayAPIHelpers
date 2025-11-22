@@ -19,4 +19,4 @@ dependencies = [
 ]
 
 [project.urls]
-"Homepage" = "https://github.com/sburl/eBayOauth"
+"Homepage" = "https://github.com/sburl/eBay-API-Helpers"
