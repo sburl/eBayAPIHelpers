@@ -1,4 +1,4 @@
-# shared_ebay
+# eBay Auth
 
 A Python library for eBay OAuth authentication and the Browse API.
 
