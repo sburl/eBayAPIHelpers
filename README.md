@@ -39,6 +39,18 @@ if ensure_valid_token():
     print(listing.title, listing.price)
 ```
 
+## Module Structure
+
+```
+src/shared_ebay/
+├── auth.py            # Token validation and auto-refresh
+├── client.py          # eBay Browse API client
+├── config.py          # Configuration management
+├── models.py          # Data models for listings
+├── generate_token.py  # OAuth token generation script
+└── token_manager.py   # Thin wrapper for external auth package
+```
+
 ## License
 
 MIT

@@ -1,5 +1,15 @@
 """
-eBay Token Manager - Automatic validation and refresh
+eBay OAuth Token Manager
+
+Handles automatic token validation and refresh for eBay API authentication.
+Tokens are stored in .env and automatically refreshed when they expire.
+
+Usage:
+    from shared_ebay import ensure_valid_token
+
+    if ensure_valid_token():
+        # Token is valid, proceed with API calls
+        pass
 """
 import os
 import base64

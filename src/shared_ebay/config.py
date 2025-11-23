@@ -1,5 +1,14 @@
 """
-Configuration settings for shared eBay client
+eBay API Configuration
+
+Manages eBay API credentials and endpoints loaded from environment variables.
+Validates required credentials are present.
+
+Usage:
+    from shared_ebay import get_config
+
+    config = get_config()
+    config.validate()  # Raises ConfigurationError if required fields missing
 """
 import os
 import logging

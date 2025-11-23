@@ -1,5 +1,15 @@
 """
-eBay API client using Browse API with OAuth authentication
+eBay Browse API Client
+
+Provides high-level interface to eBay's Browse API with automatic OAuth token management.
+Supports fetching listing data, parsing eBay URLs, and handling token refresh.
+
+Usage:
+    from shared_ebay import eBayClient
+
+    client = eBayClient()
+    listing = client.fetch_listing_data("https://www.ebay.com/itm/123456789")
+    print(f"{listing.title}: ${listing.price}")
 """
 import requests
 import logging
@@ -77,7 +87,7 @@ class eBayClient:
         }
 
         try:
-            response = requests.get(url, headers=headers, params=params, timeout=30)
+            response = requests.get(url, headers=self.headers, params=params, timeout=30)
             if response.status_code == 200:
                 return response.json()
             return None
