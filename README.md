@@ -51,6 +51,12 @@ src/shared_ebay/
 └── token_manager.py   # Thin wrapper for external auth package
 ```
 
+## Testing
+
+```bash
+python -m unittest discover -s tests -p "test_*.py"
+```
+
 ## License
 
 MIT
