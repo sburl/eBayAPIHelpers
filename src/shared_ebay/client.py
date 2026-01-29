@@ -3,17 +3,52 @@ eBay Browse API Client
 
 Provides high-level interface to eBay's Browse API with automatic OAuth token management.
 Supports fetching listing data, parsing eBay URLs, and handling token refresh.
+Includes retry logic with exponential backoff for transient errors.
+
+BREAKING CHANGE (v2.0):
+    Methods now RAISE EXCEPTIONS instead of returning None on errors.
+    This provides better error handling and debugging, but requires updating
+    downstream code that previously checked for None returns.
+
+    Old behavior (v1.x):
+        listing = client.fetch_listing_data(url)
+        if listing is None:
+            # Handle error
+
+    New behavior (v2.0+):
+        try:
+            listing = client.fetch_listing_data(url)
+        except ItemNotFoundError:
+            # Item doesn't exist
+        except UnauthorizedError:
+            # Auth failed
+        except RateLimitError:
+            # Rate limit exceeded
+        except APIError:
+            # Other API errors
+
+    Exceptions raised:
+    - ItemNotFoundError: Item not found (404)
+    - UnauthorizedError: Authentication failed (401)
+    - RateLimitError: Rate limit exceeded (429)
+    - APIError: Other API errors (4xx, 5xx, network errors)
 
 Usage:
-    from shared_ebay import eBayClient
+    from shared_ebay import eBayClient, ItemNotFoundError
 
     client = eBayClient()
-    listing = client.fetch_listing_data("https://www.ebay.com/itm/123456789")
-    print(f"{listing.title}: ${listing.price}")
+    try:
+        listing = client.fetch_listing_data("https://www.ebay.com/itm/123456789")
+        print(f"{listing.title}: ${listing.price}")
+    except ItemNotFoundError:
+        print("Item not found")
+    except APIError as e:
+        print(f"API error: {e}")
 """
 import requests
 import logging
-from typing import Optional
+import time
+from typing import Optional, Tuple
 from urllib.parse import urlparse
 from datetime import datetime
 
@@ -22,6 +57,26 @@ from .models import ListingData
 from .auth import ensure_valid_token
 
 logger = logging.getLogger(__name__)
+
+
+class APIError(Exception):
+    """Base exception for API errors"""
+    pass
+
+
+class RateLimitError(APIError):
+    """Raised when API rate limit is exceeded (429)"""
+    pass
+
+
+class ItemNotFoundError(APIError):
+    """Raised when item is not found (404)"""
+    pass
+
+
+class UnauthorizedError(APIError):
+    """Raised when authentication fails (401)"""
+    pass
 
 class eBayClient:
     def __init__(self):
@@ -76,7 +131,26 @@ class eBayClient:
         except Exception:
             return None
 
-    def get_item_details(self, item_id: str) -> Optional[dict]:
+    def get_item_details(self, item_id: str, max_retries: int = 3) -> Optional[dict]:
+        """
+        Fetch item details from eBay Browse API with retry logic.
+
+        Args:
+            item_id: eBay item ID
+            max_retries: Maximum number of retry attempts (default: 3)
+
+        Returns:
+            Item data dict if successful, None otherwise
+
+        Raises:
+            RateLimitError: If rate limit is exceeded (429)
+            ItemNotFoundError: If item is not found (404)
+            UnauthorizedError: If authentication fails (401)
+            APIError: For other API errors
+
+        Retries with exponential backoff on transient errors (5xx, network errors).
+        Does not retry on client errors (4xx) except 429 rate limiting.
+        """
         if self._should_refresh_token():
             self._refresh_token()
 
@@ -86,38 +160,104 @@ class eBayClient:
             'fieldgroups': 'PRODUCT,ADDITIONAL_SELLER_DETAILS'
         }
 
-        try:
-            response = requests.get(url, headers=self.headers, params=params, timeout=30)
-            if response.status_code == 200:
-                return response.json()
-            return None
-        except Exception as e:
-            logger.error(f"Error fetching item: {e}")
-            return None
+        for attempt in range(max_retries):
+            try:
+                response = requests.get(url, headers=self.headers, params=params, timeout=30)
+
+                # Success
+                if response.status_code == 200:
+                    logger.debug(f"Successfully fetched item {item_id}")
+                    return response.json()
+
+                # Client errors - don't retry (except 429)
+                if 400 <= response.status_code < 500:
+                    if response.status_code == 401:
+                        logger.error(f"Unauthorized (401) for item {item_id}")
+                        raise UnauthorizedError(f"Authentication failed for item {item_id}")
+                    elif response.status_code == 404:
+                        logger.warning(f"Item not found (404): {item_id}")
+                        raise ItemNotFoundError(f"Item {item_id} not found")
+                    elif response.status_code == 429:
+                        logger.warning(f"Rate limit exceeded (429) for item {item_id}, attempt {attempt + 1}/{max_retries}")
+                        if attempt < max_retries - 1:
+                            # Exponential backoff for rate limiting
+                            wait_time = (2 ** attempt) * 2  # 2, 4, 8 seconds
+                            time.sleep(wait_time)
+                            continue
+                        raise RateLimitError(f"Rate limit exceeded for item {item_id}")
+                    else:
+                        logger.error(f"Client error {response.status_code} for item {item_id}: {response.text}")
+                        raise APIError(f"API error {response.status_code}: {response.text[:100]}")
+
+                # Server errors (5xx) - retry with exponential backoff
+                if response.status_code >= 500:
+                    logger.warning(f"Server error {response.status_code} for item {item_id}, attempt {attempt + 1}/{max_retries}")
+                    if attempt < max_retries - 1:
+                        wait_time = (2 ** attempt)  # 1, 2, 4 seconds
+                        time.sleep(wait_time)
+                        continue
+                    raise APIError(f"Server error {response.status_code} after {max_retries} attempts")
+
+            except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
+                # Network errors - retry with exponential backoff
+                logger.warning(f"Network error for item {item_id}, attempt {attempt + 1}/{max_retries}: {e}")
+                if attempt < max_retries - 1:
+                    wait_time = (2 ** attempt)  # 1, 2, 4 seconds
+                    time.sleep(wait_time)
+                    continue
+                raise APIError(f"Network error after {max_retries} attempts: {str(e)}")
+
+            except (RateLimitError, ItemNotFoundError, UnauthorizedError, APIError):
+                # Re-raise our custom exceptions
+                raise
+
+            except Exception as e:
+                # Unexpected errors - log and return None
+                logger.error(f"Unexpected error fetching item {item_id}: {e}")
+                raise APIError(f"Unexpected error: {str(e)}")
+
+        # Should not reach here, but just in case
+        return None
 
     def fetch_listing_data(self, ebay_url: str) -> Optional[ListingData]:
+        """
+        Fetch and parse listing data from an eBay URL.
+
+        Args:
+            ebay_url: Full eBay item URL
+
+        Returns:
+            ListingData object if successful, None if URL is invalid or parsing fails
+
+        Raises:
+            RateLimitError: If rate limit is exceeded
+            ItemNotFoundError: If item is not found
+            UnauthorizedError: If authentication fails
+            APIError: For other API errors
+        """
         item_id = self.extract_item_id_from_url(ebay_url)
         if not item_id:
+            logger.warning(f"Could not extract item ID from URL: {ebay_url}")
             return None
-        
-        item_data = self.get_item_details(item_id)
-        if not item_data:
-            return None
-        
+
         try:
+            item_data = self.get_item_details(item_id)
+            if not item_data:
+                return None
+
             # Basic extraction logic (simplified for shared library)
             title = item_data.get('title', '')
             price_info = item_data.get('price', {})
             price = float(price_info.get('value', 0)) if price_info else 0.0
             currency = price_info.get('currency', 'USD') if price_info else 'USD'
-            
+
             # Images
             images = []
             if 'image' in item_data:
                 img = item_data['image']
                 if isinstance(img, dict) and 'imageUrl' in img:
                     images.append(img['imageUrl'])
-            
+
             return ListingData(
                 url=ebay_url,
                 title=title,
@@ -133,6 +273,9 @@ class eBayClient:
                 category_id=item_data.get('categoryId', ''),
                 listing_type='FIXED_PRICE'
             )
+        except (RateLimitError, ItemNotFoundError, UnauthorizedError, APIError):
+            # Re-raise API errors for caller to handle
+            raise
         except Exception as e:
-            logger.error(f"Error parsing listing: {e}")
+            logger.error(f"Error parsing listing {item_id}: {e}")
             return None

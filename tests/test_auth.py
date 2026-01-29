@@ -8,6 +8,7 @@ APIHELPERS_SRC = Path(__file__).resolve().parents[1] / "src"
 sys.path.insert(0, str(APIHELPERS_SRC))
 
 from shared_ebay import auth as shared_auth
+from shared_ebay.auth import TokenStatus
 from shared_ebay.config import Config
 
 
@@ -74,9 +75,9 @@ class TestTokenManager(unittest.TestCase):
         mock_get.return_value = mock_response
 
         manager = shared_auth.TokenManager()
-        is_valid, error = manager.test_token_validity("valid-token")
+        status, error = manager.test_token_validity("valid-token")
 
-        self.assertTrue(is_valid)
+        self.assertEqual(status, TokenStatus.VALID)
         self.assertIsNone(error)
         mock_get.assert_called_once()
 
@@ -88,33 +89,24 @@ class TestTokenManager(unittest.TestCase):
         mock_get.return_value = mock_response
 
         manager = shared_auth.TokenManager()
-        is_valid, error = manager.test_token_validity("expired-token")
+        status, error = manager.test_token_validity("expired-token")
 
-        self.assertFalse(is_valid)
+        self.assertEqual(status, TokenStatus.INVALID)
         self.assertEqual(error, "Token is invalid or expired")
 
     @patch('shared_ebay.auth.requests.get')
     def test_token_validity_network_error(self, mock_get):
-        # Mock network error - should treat as valid (conservative approach)
+        # Mock network error - should return UNKNOWN (can't determine)
         import requests
         mock_get.side_effect = requests.exceptions.RequestException("Network error")
 
         manager = shared_auth.TokenManager()
-        is_valid, error = manager.test_token_validity("token")
+        status, error = manager.test_token_validity("token")
 
-        # Current behavior: network errors treated as valid (conservative)
-        # This is intentional to avoid blocking operations when eBay API is unreachable,
-        # but it has a trade-off: auth regressions might be hidden if the network is down.
-        #
-        # Design rationale:
-        # - If we can't reach eBay's API, we assume the token *might* be valid
-        # - Returning False would block legitimate operations during transient outages
-        # - The alternative is to return a third state (UNKNOWN) - see PR #3 for this
-        #
-        # Limitation: If auth is actually broken, network issues will hide the failure
-        # until connectivity is restored. Monitor auth success rates in production.
-        self.assertTrue(is_valid)
-        self.assertIsNone(error)
+        # Network errors return UNKNOWN (not VALID or INVALID)
+        # This avoids false positives/negatives when eBay API is unreachable
+        self.assertEqual(status, TokenStatus.UNKNOWN)
+        self.assertIn("Network error", error)
 
     @patch('shared_ebay.auth.requests.post')
     def test_refresh_access_token_success(self, mock_post):
@@ -216,7 +208,7 @@ class TestTokenManager(unittest.TestCase):
     @patch.object(shared_auth.TokenManager, 'test_token_validity')
     def test_ensure_valid_token_already_valid(self, mock_test_validity, mock_get_current_token):
         mock_get_current_token.return_value = "valid-token"
-        mock_test_validity.return_value = (True, None)
+        mock_test_validity.return_value = (TokenStatus.VALID, None)
 
         manager = shared_auth.TokenManager()
         result = manager.ensure_valid_token(verbose=False)
@@ -225,10 +217,22 @@ class TestTokenManager(unittest.TestCase):
 
     @patch.object(shared_auth.TokenManager, 'get_current_token')
     @patch.object(shared_auth.TokenManager, 'test_token_validity')
+    def test_ensure_valid_token_unknown_status(self, mock_test_validity, mock_get_current_token):
+        # When status is UNKNOWN (network error), should return True (conservative)
+        mock_get_current_token.return_value = "token"
+        mock_test_validity.return_value = (TokenStatus.UNKNOWN, "Network error")
+
+        manager = shared_auth.TokenManager()
+        result = manager.ensure_valid_token(verbose=False)
+
+        self.assertTrue(result)  # Assumes token might be valid
+
+    @patch.object(shared_auth.TokenManager, 'get_current_token')
+    @patch.object(shared_auth.TokenManager, 'test_token_validity')
     @patch.object(shared_auth.TokenManager, 'get_refresh_token')
     def test_ensure_valid_token_no_refresh_token(self, mock_get_refresh, mock_test_validity, mock_get_current_token):
         mock_get_current_token.return_value = "expired-token"
-        mock_test_validity.return_value = (False, "Token expired")
+        mock_test_validity.return_value = (TokenStatus.INVALID, "Token expired")
         mock_get_refresh.return_value = None
 
         manager = shared_auth.TokenManager()
@@ -243,7 +247,7 @@ class TestTokenManager(unittest.TestCase):
     @patch.object(shared_auth.TokenManager, 'save_tokens')
     def test_ensure_valid_token_refresh_success(self, mock_save, mock_refresh, mock_get_refresh, mock_test_validity, mock_get_current_token):
         mock_get_current_token.return_value = "expired-token"
-        mock_test_validity.return_value = (False, "Token expired")
+        mock_test_validity.return_value = (TokenStatus.INVALID, "Token expired")
         mock_get_refresh.return_value = "refresh-token"
         mock_refresh.return_value = {'access_token': 'new-token'}
         mock_save.return_value = True
@@ -261,7 +265,7 @@ class TestTokenManager(unittest.TestCase):
     @patch.object(shared_auth.TokenManager, 'refresh_access_token')
     def test_ensure_valid_token_refresh_failure(self, mock_refresh, mock_get_refresh, mock_test_validity, mock_get_current_token):
         mock_get_current_token.return_value = "expired-token"
-        mock_test_validity.return_value = (False, "Token expired")
+        mock_test_validity.return_value = (TokenStatus.INVALID, "Token expired")
         mock_get_refresh.return_value = "refresh-token"
         mock_refresh.return_value = None
 

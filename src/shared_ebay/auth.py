@@ -24,8 +24,16 @@ import logging
 from datetime import datetime, timedelta
 from dotenv import load_dotenv, set_key
 from typing import Optional, Tuple, Dict
+from enum import Enum
 
 from .config import get_config, _key
+
+
+class TokenStatus(Enum):
+    """Token validation status"""
+    VALID = "valid"
+    INVALID = "invalid"
+    UNKNOWN = "unknown"  # Network error or unable to determine
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -66,8 +74,16 @@ class TokenManager:
         load_dotenv(override=True)
         return os.getenv(self._env_key('EBAY_REFRESH_TOKEN'))
     
-    def test_token_validity(self, token: str) -> Tuple[bool, Optional[str]]:
-        """Test if a token is valid by making a simple API call"""
+    def test_token_validity(self, token: str) -> Tuple[TokenStatus, Optional[str]]:
+        """
+        Test if a token is valid by making a simple API call.
+
+        Returns:
+            (TokenStatus, error_message): Status and optional error message
+            - VALID: Token is valid and working
+            - INVALID: Token is expired or unauthorized (401)
+            - UNKNOWN: Network error or unable to determine (conservative approach)
+        """
         url = f"{self.config.ebay_browse_api_url}/item/get_item_by_legacy_id"
         headers = {
             'Authorization': f'Bearer {token}',
@@ -75,14 +91,17 @@ class TokenManager:
             'Accept': 'application/json'
         }
         params = {'legacy_item_id': '123456789'}  # Dummy ID
-        
+
         try:
             response = requests.get(url, headers=headers, params=params, timeout=10)
             if response.status_code == 401:
-                return False, "Token is invalid or expired"
-            return True, None
-        except requests.exceptions.RequestException:
-            return True, None
+                return TokenStatus.INVALID, "Token is invalid or expired"
+            # Any other successful response means token is valid
+            return TokenStatus.VALID, None
+        except requests.exceptions.RequestException as e:
+            # Network error - we can't determine validity, return UNKNOWN
+            logger.warning(f"Unable to verify token validity due to network error: {e}")
+            return TokenStatus.UNKNOWN, f"Network error: {str(e)}"
     
     def refresh_access_token(self, refresh_token: str) -> Optional[dict]:
         """Use refresh token to get a new access token"""
@@ -135,16 +154,32 @@ class TokenManager:
             return False
 
     def ensure_valid_token(self, verbose: bool = True) -> bool:
-        """Ensure we have a valid access token, refreshing if necessary"""
+        """
+        Ensure we have a valid access token, refreshing if necessary.
+
+        Returns:
+            bool: True if token is valid or successfully refreshed, False otherwise
+
+        Note: If token status is UNKNOWN (network error), we assume it might be valid
+        and don't attempt refresh to avoid unnecessary API calls. The actual API call
+        will fail gracefully if the token is truly invalid.
+        """
         current_token = self.get_current_token()
         if not current_token:
             if verbose: print(f"❌ No access token found in .env for suffix '{self.suffix}'")
             return False
 
-        is_valid, error = self.test_token_validity(current_token)
-        if is_valid:
+        status, error = self.test_token_validity(current_token)
+
+        if status == TokenStatus.VALID:
             return True
 
+        if status == TokenStatus.UNKNOWN:
+            # Network error - assume token might be valid to avoid unnecessary refresh
+            if verbose: print(f"⚠️  Unable to verify token (network error), assuming valid: {error}")
+            return True
+
+        # Token is INVALID - attempt refresh
         if verbose: print(f"⚠️  Access token invalid, refreshing... (suffix '{self.suffix}')")
 
         refresh_token = self.get_refresh_token()
