@@ -3,12 +3,18 @@ eBay OAuth Token Manager
 
 Handles automatic token validation and refresh for eBay API authentication.
 Tokens are stored in .env and automatically refreshed when they expire.
+Supports multiple eBay accounts via suffix.
 
 Usage:
     from shared_ebay import ensure_valid_token
 
     if ensure_valid_token():
         # Token is valid, proceed with API calls
+        pass
+
+    # For second account:
+    if ensure_valid_token(suffix="2"):
+        # Second account token is valid
         pass
 """
 import os
@@ -17,21 +23,22 @@ import requests
 import logging
 from datetime import datetime, timedelta
 from dotenv import load_dotenv, set_key
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Dict
 
-from .config import get_config
+from .config import get_config, _key
 
 load_dotenv()
 logger = logging.getLogger(__name__)
 
 class TokenManager:
     """Manages eBay OAuth tokens with automatic refresh"""
-    
-    def __init__(self):
-        self.config = get_config()
+
+    def __init__(self, suffix: str = ""):
+        self.suffix = suffix
+        self.config = get_config(suffix)
         self.token_url = "https://api.ebay.com/identity/v1/oauth2/token"
         self.env_file = self._find_env_file()
-    
+
     def _find_env_file(self) -> str:
         """Find the .env file location"""
         # Look for .env in current directory or parent directories
@@ -42,18 +49,22 @@ class TokenManager:
                 return env_path
             parent = os.path.dirname(current)
             if parent == current:
-                return '.env' # Fallback
+                return '.env'  # Fallback
             current = parent
-    
+
+    def _env_key(self, base: str) -> str:
+        """Get environment variable key with optional suffix"""
+        return _key(base, self.suffix)
+
     def get_current_token(self) -> Optional[str]:
         """Get the current access token from environment"""
         load_dotenv(override=True)
-        return os.getenv('EBAY_USER_TOKEN')
-    
+        return os.getenv(self._env_key('EBAY_USER_TOKEN'))
+
     def get_refresh_token(self) -> Optional[str]:
         """Get the refresh token from environment"""
         load_dotenv(override=True)
-        return os.getenv('EBAY_REFRESH_TOKEN')
+        return os.getenv(self._env_key('EBAY_REFRESH_TOKEN'))
     
     def test_token_validity(self, token: str) -> Tuple[bool, Optional[str]]:
         """Test if a token is valid by making a simple API call"""
@@ -107,58 +118,61 @@ class TokenManager:
             response.raise_for_status()
             return response.json()
         except Exception as e:
-            logger.error(f"Error refreshing token: {e}")
+            logger.error(f"Error refreshing token ({self.suffix or 'default'}): {e}")
             return None
-    
+
     def save_tokens(self, token_data: dict) -> bool:
         """Save tokens to .env file"""
         try:
             if 'access_token' in token_data:
-                set_key(self.env_file, 'EBAY_USER_TOKEN', token_data['access_token'])
+                set_key(self.env_file, self._env_key('EBAY_USER_TOKEN'), token_data['access_token'])
             if 'refresh_token' in token_data:
-                set_key(self.env_file, 'EBAY_REFRESH_TOKEN', token_data['refresh_token'])
+                set_key(self.env_file, self._env_key('EBAY_REFRESH_TOKEN'), token_data['refresh_token'])
             load_dotenv(override=True)
             return True
         except Exception as e:
-            logger.error(f"Error saving tokens: {e}")
+            logger.error(f"Error saving tokens ({self.suffix or 'default'}): {e}")
             return False
 
     def ensure_valid_token(self, verbose: bool = True) -> bool:
         """Ensure we have a valid access token, refreshing if necessary"""
         current_token = self.get_current_token()
         if not current_token:
-            if verbose: print("❌ No access token found in .env")
+            if verbose: print(f"❌ No access token found in .env for suffix '{self.suffix}'")
             return False
-            
+
         is_valid, error = self.test_token_validity(current_token)
         if is_valid:
             return True
-            
-        if verbose: print(f"⚠️  Access token invalid, refreshing...")
-        
+
+        if verbose: print(f"⚠️  Access token invalid, refreshing... (suffix '{self.suffix}')")
+
         refresh_token = self.get_refresh_token()
         if not refresh_token:
-            if verbose: print("❌ No refresh token found")
+            if verbose: print(f"❌ No refresh token found for suffix '{self.suffix}'")
             return False
-            
+
         token_data = self.refresh_access_token(refresh_token)
         if not token_data:
             if verbose: print("❌ Failed to refresh token")
             return False
-            
+
         if self.save_tokens(token_data):
             if verbose: print("✓ Token refreshed successfully!")
             return True
-            
+
         return False
 
-_token_manager = None
 
-def get_token_manager() -> TokenManager:
-    global _token_manager
-    if _token_manager is None:
-        _token_manager = TokenManager()
-    return _token_manager
+_token_managers: Dict[str, TokenManager] = {}
 
-def ensure_valid_token(verbose: bool = True) -> bool:
-    return get_token_manager().ensure_valid_token(verbose=verbose)
+
+def get_token_manager(suffix: str = "") -> TokenManager:
+    global _token_managers
+    if suffix not in _token_managers:
+        _token_managers[suffix] = TokenManager(suffix)
+    return _token_managers[suffix]
+
+
+def ensure_valid_token(verbose: bool = True, suffix: str = "") -> bool:
+    return get_token_manager(suffix).ensure_valid_token(verbose=verbose)

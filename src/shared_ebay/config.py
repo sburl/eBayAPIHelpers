@@ -3,16 +3,20 @@ eBay API Configuration
 
 Manages eBay API credentials and endpoints loaded from environment variables.
 Validates required credentials are present.
+Supports multiple eBay accounts via suffix (e.g., EBAY_APP_ID_2 for second account).
 
 Usage:
     from shared_ebay import get_config
 
-    config = get_config()
-    config.validate()  # Raises ConfigurationError if required fields missing
+    config = get_config()          # Default account
+    config.validate()
+
+    config2 = get_config("2")      # Second account using _2 suffix
+    config2.validate()
 """
 import os
 import logging
-from typing import Optional
+from typing import Dict
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -24,35 +28,45 @@ class ConfigurationError(Exception):
     """Raised when configuration is invalid or incomplete"""
     pass
 
+
+def _key(base: str, suffix: str) -> str:
+    """Helper to generate environment variable key with optional suffix"""
+    return f"{base}_{suffix}" if suffix else base
+
+
 class Config:
-    """eBay Configuration"""
-    
-    def __init__(self):
+    """eBay Configuration (supports multiple accounts via numeric suffix)"""
+
+    def __init__(self, suffix: str = ""):
+        self.suffix = suffix
+        env = lambda k, default=None: os.getenv(_key(k, suffix), default)
+
         # Required eBay credentials
-        self.ebay_app_id = os.getenv('EBAY_APP_ID')
-        self.ebay_client_secret = os.getenv('EBAY_CLIENT_SECRET')
-        self.ebay_dev_id = os.getenv('EBAY_DEV_ID')
-        
+        self.ebay_app_id = env('EBAY_APP_ID')
+        self.ebay_client_secret = env('EBAY_CLIENT_SECRET')
+        self.ebay_dev_id = env('EBAY_DEV_ID')
+
         # User token (can be empty on first run, will be obtained via OAuth)
-        self.ebay_user_token = os.getenv('EBAY_USER_TOKEN', '')
-        self.ebay_refresh_token = os.getenv('EBAY_REFRESH_TOKEN', '')
-        
-        # API Endpoints
+        self.ebay_user_token = env('EBAY_USER_TOKEN', '')
+        self.ebay_refresh_token = env('EBAY_REFRESH_TOKEN', '')
+
+        # API Endpoints (Browse API used only for token validation)
         self.ebay_browse_api_url = "https://api.ebay.com/buy/browse/v1"
-            
+
     def validate(self):
         """Validate required configuration"""
         if not self.ebay_app_id:
-            raise ConfigurationError("EBAY_APP_ID not set")
+            raise ConfigurationError(_key("EBAY_APP_ID", self.suffix) + " not set")
         if not self.ebay_client_secret:
-            raise ConfigurationError("EBAY_CLIENT_SECRET not set")
+            raise ConfigurationError(_key("EBAY_CLIENT_SECRET", self.suffix) + " not set")
 
-# Global configuration instance
-_config: Optional[Config] = None
 
-def get_config() -> Config:
+# Global configuration instances keyed by suffix
+_config: Dict[str, Config] = {}
+
+def get_config(suffix: str = "") -> Config:
     """Get the global configuration instance"""
     global _config
-    if _config is None:
-        _config = Config()
-    return _config
+    if suffix not in _config:
+        _config[suffix] = Config(suffix)
+    return _config[suffix]
