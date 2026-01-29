@@ -53,6 +53,13 @@ class Config:
         # API Endpoints (Browse API used only for token validation)
         self.ebay_browse_api_url = "https://api.ebay.com/buy/browse/v1"
 
+        # Optional: Sales tax rate for price calculations (0.0 = no tax)
+        try:
+            self.sales_tax_rate = float(env('SALES_TAX_RATE', '0.0'))
+        except ValueError:
+            logger.warning("Invalid SALES_TAX_RATE, using 0.0")
+            self.sales_tax_rate = 0.0
+
     def validate(self):
         """Validate required configuration"""
         if not self.ebay_app_id:
