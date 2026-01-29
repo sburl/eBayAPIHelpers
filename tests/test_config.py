@@ -2,6 +2,7 @@ import os
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 APIHELPERS_SRC = Path(__file__).resolve().parents[1] / "src"
 sys.path.insert(0, str(APIHELPERS_SRC))
@@ -13,10 +14,14 @@ class ConfigTests(unittest.TestCase):
     def setUp(self):
         self._original_env = os.environ.copy()
 
+        # Patch load_dotenv to prevent tests from reading real .env files
+        self.mock_load_dotenv = patch('shared_ebay.config.load_dotenv').start()
+
     def tearDown(self):
         os.environ.clear()
         os.environ.update(self._original_env)
         shared_config._config = {}
+        patch.stopall()
 
     def test_config_validate_success(self):
         os.environ["EBAY_APP_ID"] = "app-id"
