@@ -32,6 +32,23 @@ class ConfigTests(unittest.TestCase):
         with self.assertRaises(shared_config.ConfigurationError):
             shared_config.Config().validate()
 
+    def test_config_validate_missing_client_secret(self):
+        os.environ["EBAY_APP_ID"] = "app-id"
+        os.environ.pop("EBAY_CLIENT_SECRET", None)
+
+        with self.assertRaises(shared_config.ConfigurationError):
+            shared_config.Config().validate()
+
+    def test_config_values_set_correctly(self):
+        os.environ["EBAY_APP_ID"] = "test-app-id"
+        os.environ["EBAY_CLIENT_SECRET"] = "test-secret"
+
+        cfg = shared_config.Config()
+        cfg.validate()
+
+        self.assertEqual(cfg.ebay_app_id, "test-app-id")
+        self.assertEqual(cfg.ebay_client_secret, "test-secret")
+
     def test_get_config_singleton(self):
         os.environ["EBAY_APP_ID"] = "app-id"
         os.environ["EBAY_CLIENT_SECRET"] = "secret"
