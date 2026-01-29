@@ -186,6 +186,22 @@ class eBayClient:
                             time.sleep(wait_time)
                             continue
                         raise RateLimitError(f"Rate limit exceeded for item {item_id}")
+                    elif response.status_code == 400:
+                        # Check if this is an item group (error 11006)
+                        try:
+                            error_data = response.json()
+                            errors = error_data.get('errors', [])
+                            for error in errors:
+                                if error.get('errorId') == 11006:
+                                    # This is an item group - fetch group details instead
+                                    logger.info(f"Item {item_id} is an item group, fetching group details...")
+                                    return self._get_item_group_details(item_id, self.headers)
+                        except (ValueError, KeyError):
+                            pass  # Can't parse error, treat as generic 400
+
+                        # Other 400 errors
+                        logger.error(f"Client error 400 for item {item_id}: {response.text}")
+                        raise APIError(f"API error 400: {response.text[:100]}")
                     else:
                         logger.error(f"Client error {response.status_code} for item {item_id}: {response.text}")
                         raise APIError(f"API error {response.status_code}: {response.text[:100]}")
