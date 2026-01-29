@@ -19,10 +19,18 @@ class TestTokenManager(unittest.TestCase):
         os.environ["EBAY_CLIENT_SECRET"] = "test-secret"
         shared_auth._token_managers = {}
 
+        # Patch load_dotenv to prevent tests from reading real .env files
+        # This makes tests hermetic and prevents false positives/negatives
+        self.mock_auth_load_dotenv = patch('shared_ebay.auth.load_dotenv').start()
+        self.mock_config_load_dotenv = patch('shared_ebay.config.load_dotenv').start()
+
     def tearDown(self):
         os.environ.clear()
         os.environ.update(self._original_env)
         shared_auth._token_managers = {}
+
+        # Stop all patches
+        patch.stopall()
 
     def test_token_manager_initialization(self):
         manager = shared_auth.TokenManager()
@@ -260,10 +268,17 @@ class TestHelperFunctions(unittest.TestCase):
         os.environ["EBAY_CLIENT_SECRET"] = "test-secret"
         shared_auth._token_managers = {}
 
+        # Patch load_dotenv to prevent tests from reading real .env files
+        self.mock_auth_load_dotenv = patch('shared_ebay.auth.load_dotenv').start()
+        self.mock_config_load_dotenv = patch('shared_ebay.config.load_dotenv').start()
+
     def tearDown(self):
         os.environ.clear()
         os.environ.update(self._original_env)
         shared_auth._token_managers = {}
+
+        # Stop all patches
+        patch.stopall()
 
     def test_get_token_manager_singleton(self):
         manager1 = shared_auth.get_token_manager()
