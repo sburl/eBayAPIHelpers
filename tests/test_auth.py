@@ -103,6 +103,16 @@ class TestTokenManager(unittest.TestCase):
         is_valid, error = manager.test_token_validity("token")
 
         # Current behavior: network errors treated as valid (conservative)
+        # This is intentional to avoid blocking operations when eBay API is unreachable,
+        # but it has a trade-off: auth regressions might be hidden if the network is down.
+        #
+        # Design rationale:
+        # - If we can't reach eBay's API, we assume the token *might* be valid
+        # - Returning False would block legitimate operations during transient outages
+        # - The alternative is to return a third state (UNKNOWN) - see PR #3 for this
+        #
+        # Limitation: If auth is actually broken, network issues will hide the failure
+        # until connectivity is restored. Monitor auth success rates in production.
         self.assertTrue(is_valid)
         self.assertIsNone(error)
 
