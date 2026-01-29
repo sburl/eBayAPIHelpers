@@ -2,6 +2,10 @@
 
 A Python library for eBay OAuth authentication and the Browse API.
 
+**Part of the eBay project ecosystem** - Shared foundation for [alert](https://github.com/sburl/eBayAlert) (listing evaluator), [eBay2Parcel](https://github.com/sburl/eBay2Parcel) (order tracker), and future projects.
+
+📚 **[See ECOSYSTEM.md](./ECOSYSTEM.md) for architecture overview and integration patterns**
+
 ## Installation
 
 ```bash
