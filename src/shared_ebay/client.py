@@ -5,12 +5,45 @@ Provides high-level interface to eBay's Browse API with automatic OAuth token ma
 Supports fetching listing data, parsing eBay URLs, and handling token refresh.
 Includes retry logic with exponential backoff for transient errors.
 
+BREAKING CHANGE (v2.0):
+    Methods now RAISE EXCEPTIONS instead of returning None on errors.
+    This provides better error handling and debugging, but requires updating
+    downstream code that previously checked for None returns.
+
+    Old behavior (v1.x):
+        listing = client.fetch_listing_data(url)
+        if listing is None:
+            # Handle error
+
+    New behavior (v2.0+):
+        try:
+            listing = client.fetch_listing_data(url)
+        except ItemNotFoundError:
+            # Item doesn't exist
+        except UnauthorizedError:
+            # Auth failed
+        except RateLimitError:
+            # Rate limit exceeded
+        except APIError:
+            # Other API errors
+
+    Exceptions raised:
+    - ItemNotFoundError: Item not found (404)
+    - UnauthorizedError: Authentication failed (401)
+    - RateLimitError: Rate limit exceeded (429)
+    - APIError: Other API errors (4xx, 5xx, network errors)
+
 Usage:
-    from shared_ebay import eBayClient
+    from shared_ebay import eBayClient, ItemNotFoundError
 
     client = eBayClient()
-    listing = client.fetch_listing_data("https://www.ebay.com/itm/123456789")
-    print(f"{listing.title}: ${listing.price}")
+    try:
+        listing = client.fetch_listing_data("https://www.ebay.com/itm/123456789")
+        print(f"{listing.title}: ${listing.price}")
+    except ItemNotFoundError:
+        print("Item not found")
+    except APIError as e:
+        print(f"API error: {e}")
 """
 import requests
 import logging
@@ -18,7 +51,6 @@ import time
 from typing import Optional, Tuple
 from urllib.parse import urlparse
 from datetime import datetime
-from enum import Enum
 
 from .config import get_config
 from .models import ListingData
@@ -128,7 +160,6 @@ class eBayClient:
             'fieldgroups': 'PRODUCT,ADDITIONAL_SELLER_DETAILS'
         }
 
-        last_exception = None
         for attempt in range(max_retries):
             try:
                 response = requests.get(url, headers=self.headers, params=params, timeout=30)
@@ -170,7 +201,6 @@ class eBayClient:
             except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
                 # Network errors - retry with exponential backoff
                 logger.warning(f"Network error for item {item_id}, attempt {attempt + 1}/{max_retries}: {e}")
-                last_exception = e
                 if attempt < max_retries - 1:
                     wait_time = (2 ** attempt)  # 1, 2, 4 seconds
                     time.sleep(wait_time)
