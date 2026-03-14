@@ -1,5 +1,8 @@
 # eBay Project Ecosystem
 
+**Created:** 2026-01-29-16-34
+**Last Updated:** 2026-01-29-16-34
+
 This document explains how APIHelpers fits into the broader eBay project ecosystem.
 
 ## Overview

@@ -1,5 +1,8 @@
 # eBay API Helpers
 
+**Created:** 2025-11-22-16-40
+**Last Updated:** 2026-01-29-16-34
+
 A Python library for eBay OAuth authentication and the Browse API.
 
 **Part of the eBay project ecosystem** - Shared foundation for [alert](https://github.com/sburl/eBayAlert) (listing evaluator), [eBay2Parcel](https://github.com/sburl/eBay2Parcel) (order tracker), and future projects.
