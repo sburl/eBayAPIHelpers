@@ -117,14 +117,19 @@ class TokenManager:
             'Authorization': f'Basic {b64_credentials}'
         }
         
-        # Scopes for refresh — must be a subset of what was consented during
-        # the initial OAuth flow (generate_token.py).  Configurable via env var
-        # to avoid mismatch when the app only has certain scopes approved.
+        # Standard scopes — override via EBAY_OAUTH_SCOPES env var if the app
+        # only has a subset approved in the OAuth consent flow.
         scopes_env = os.getenv(self._env_key('EBAY_OAUTH_SCOPES'), '')
         if scopes_env.strip():
             scopes = scopes_env.strip().split()
         else:
-            scopes = ['https://api.ebay.com/oauth/api_scope']
+            scopes = [
+                'https://api.ebay.com/oauth/api_scope',
+                'https://api.ebay.com/oauth/api_scope/buy.order',
+                'https://api.ebay.com/oauth/api_scope/sell.marketing.readonly',
+                'https://api.ebay.com/oauth/api_scope/sell.inventory.readonly',
+                'https://api.ebay.com/oauth/api_scope/sell.account.readonly',
+            ]
 
         data = {
             'grant_type': 'refresh_token',
