@@ -131,6 +131,26 @@ class TesteBayClient(unittest.TestCase):
         self.assertEqual(mock_get.call_count, 2)  # Original + retry after refresh
 
     @patch('shared_ebay.client.requests.get')
+    def test_get_item_details_401_refresh_fails_raises_unauthorized(self, mock_get, mock_dotenv_load, mock_config_load, mock_get_tm):
+        mock_tm = _mock_token_manager()
+        # First ensure_valid_token succeeds (init), second fails (401 refresh attempt)
+        mock_tm.ensure_valid_token.side_effect = [True, False]
+        mock_get_tm.return_value = mock_tm
+
+        mock_response = MagicMock()
+        mock_response.status_code = 401
+        mock_get.return_value = mock_response
+
+        client = eBayClient()
+
+        # Should raise UnauthorizedError, not APIError
+        with self.assertRaises(UnauthorizedError):
+            client.get_item_details("123456789")
+
+        # Only 1 API call — refresh failed before retry
+        self.assertEqual(mock_get.call_count, 1)
+
+    @patch('shared_ebay.client.requests.get')
     @patch('shared_ebay.client.time.sleep')
     def test_get_item_details_429_rate_limit_with_retry(self, mock_sleep, mock_get, mock_dotenv_load, mock_config_load, mock_get_tm):
         mock_get_tm.return_value = _mock_token_manager()

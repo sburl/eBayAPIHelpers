@@ -171,7 +171,11 @@ class eBayClient:
                             logger.warning(f"Unauthorized (401) for item {item_id}, refreshing token and retrying...")
                             _retried_auth = True
                             self._token_manager.token_refreshed_at = None  # Force refresh
-                            self._refresh_token()
+                            try:
+                                self._refresh_token()
+                            except ValueError:
+                                logger.error(f"Token refresh failed for item {item_id}")
+                                raise UnauthorizedError(f"Authentication failed for item {item_id} (token refresh failed)")
                             continue
                         logger.error(f"Unauthorized (401) for item {item_id} after token refresh")
                         raise UnauthorizedError(f"Authentication failed for item {item_id}")
