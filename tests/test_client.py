@@ -22,6 +22,7 @@ def _mock_token_manager():
     mock_tm = MagicMock()
     mock_tm.ensure_valid_token.return_value = True
     mock_tm.needs_refresh.return_value = False
+    mock_tm.get_current_token.return_value = "test-token"
     mock_tm.token_refreshed_at = None
     return mock_tm
 

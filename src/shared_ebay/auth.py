@@ -98,6 +98,14 @@ class TokenManager:
             return True  # Unknown age — needs verification
         return age >= REFRESH_THRESHOLD
 
+    def invalidate(self):
+        """Mark the current token as needing re-validation.
+
+        Forces the next ensure_valid_token() call to verify or refresh
+        rather than trusting the local timestamp.
+        """
+        self.token_refreshed_at = None
+
     def get_current_token(self) -> Optional[str]:
         """Get the current access token from environment"""
         load_dotenv(override=True)

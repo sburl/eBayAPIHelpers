@@ -91,12 +91,7 @@ class eBayClient:
         if not self._token_manager.ensure_valid_token(verbose=False):
             raise ValueError("Unable to obtain valid eBay token")
 
-        # Reload to get latest token
-        from dotenv import load_dotenv
-        import os
-        load_dotenv(override=True)
-
-        self.user_token = os.getenv('EBAY_USER_TOKEN')
+        self.user_token = self._token_manager.get_current_token()
         if not self.user_token:
             raise ValueError("EBAY_USER_TOKEN not found")
 
@@ -170,7 +165,7 @@ class eBayClient:
                             # Token expired mid-batch — refresh and retry once
                             logger.warning(f"Unauthorized (401) for item {item_id}, refreshing token and retrying...")
                             _retried_auth = True
-                            self._token_manager.token_refreshed_at = None  # Force refresh
+                            self._token_manager.invalidate()  # Force refresh
                             try:
                                 self._refresh_token()
                             except ValueError:
