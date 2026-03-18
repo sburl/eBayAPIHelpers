@@ -91,7 +91,7 @@ class eBayClient:
     def _should_refresh_token(self) -> bool:
         if self.token_refreshed_at is None:
             return True
-        age_seconds = (datetime.now() - self.token_refreshed_at).seconds
+        age_seconds = (datetime.now() - self.token_refreshed_at).total_seconds()
         return age_seconds > self.token_refresh_threshold
 
     def _refresh_token(self):
@@ -160,6 +160,7 @@ class eBayClient:
             'legacy_item_id': item_id,
             'fieldgroups': 'PRODUCT,ADDITIONAL_SELLER_DETAILS'
         }
+        _retried_auth = False  # Track whether we've already retried on 401
 
         for attempt in range(max_retries):
             try:
@@ -170,10 +171,17 @@ class eBayClient:
                     logger.debug(f"Successfully fetched item {item_id}")
                     return response.json()
 
-                # Client errors - don't retry (except 429)
+                # Client errors - don't retry (except 429 and 401-once)
                 if 400 <= response.status_code < 500:
                     if response.status_code == 401:
-                        logger.error(f"Unauthorized (401) for item {item_id}")
+                        if not _retried_auth:
+                            # Token expired mid-batch — refresh and retry once
+                            logger.warning(f"Unauthorized (401) for item {item_id}, refreshing token and retrying...")
+                            _retried_auth = True
+                            self.token_refreshed_at = None  # Force refresh
+                            self._refresh_token()
+                            continue
+                        logger.error(f"Unauthorized (401) for item {item_id} after token refresh")
                         raise UnauthorizedError(f"Authentication failed for item {item_id}")
                     elif response.status_code == 404:
                         logger.warning(f"Item not found (404): {item_id}")
