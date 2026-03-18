@@ -19,6 +19,15 @@ from shared_ebay.models import ListingData
 from shared_ebay import config as config_module
 
 
+def _mock_token_manager():
+    """Create a mock TokenManager that always returns a valid token."""
+    mock_tm = MagicMock()
+    mock_tm.ensure_valid_token.return_value = True
+    mock_tm.needs_refresh.return_value = False
+    mock_tm.token_refreshed_at = None
+    return mock_tm
+
+
 class TestShippingExtraction(unittest.TestCase):
     """Test shipping cost extraction from various eBay API formats"""
 
@@ -28,7 +37,7 @@ class TestShippingExtraction(unittest.TestCase):
         os.environ['EBAY_CLIENT_SECRET'] = 'test-secret'
         os.environ['EBAY_USER_TOKEN'] = 'test-token'
 
-    @patch('shared_ebay.client.ensure_valid_token', return_value=True)
+    @patch('shared_ebay.client.get_token_manager', return_value=_mock_token_manager())
     @patch('shared_ebay.client.requests.get')
     def test_shipping_from_shipping_options(self, mock_get, mock_token):
         """Should extract shipping cost from shippingOptions field"""
@@ -51,7 +60,7 @@ class TestShippingExtraction(unittest.TestCase):
         self.assertEqual(listing.shipping_cost, 10.50)
         self.assertEqual(listing.shipping_type, 'CALCULATED')
 
-    @patch('shared_ebay.client.ensure_valid_token', return_value=True)
+    @patch('shared_ebay.client.get_token_manager', return_value=_mock_token_manager())
     @patch('shared_ebay.client.requests.get')
     def test_free_shipping_detection(self, mock_get, mock_token):
         """Should detect free shipping from shippingCostType"""
@@ -74,7 +83,7 @@ class TestShippingExtraction(unittest.TestCase):
         self.assertEqual(listing.shipping_cost, 0.0)
         self.assertEqual(listing.shipping_type, 'FREE')
 
-    @patch('shared_ebay.client.ensure_valid_token', return_value=True)
+    @patch('shared_ebay.client.get_token_manager', return_value=_mock_token_manager())
     @patch('shared_ebay.client.requests.get')
     def test_free_shipping_from_text(self, mock_get, mock_token):
         """Should detect 'free shipping' in title/description"""
@@ -94,7 +103,7 @@ class TestShippingExtraction(unittest.TestCase):
         self.assertEqual(listing.shipping_cost, 0.0)
         self.assertEqual(listing.shipping_type, 'FREE')
 
-    @patch('shared_ebay.client.ensure_valid_token', return_value=True)
+    @patch('shared_ebay.client.get_token_manager', return_value=_mock_token_manager())
     @patch('shared_ebay.client.requests.get')
     def test_shipping_from_additional_fields(self, mock_get, mock_token):
         """Should extract shipping from shippingCost field (fallback)"""
@@ -123,7 +132,7 @@ class TestImportCharges(unittest.TestCase):
         os.environ['EBAY_CLIENT_SECRET'] = 'test-secret'
         os.environ['EBAY_USER_TOKEN'] = 'test-token'
 
-    @patch('shared_ebay.client.ensure_valid_token', return_value=True)
+    @patch('shared_ebay.client.get_token_manager', return_value=_mock_token_manager())
     @patch('shared_ebay.client.requests.get')
     def test_extract_import_duty(self, mock_get, mock_token):
         """Should extract import charges from importDuty field"""
@@ -143,7 +152,7 @@ class TestImportCharges(unittest.TestCase):
         self.assertEqual(listing.import_charges, 12.50)
         self.assertEqual(listing.ship_from_country, 'GB')
 
-    @patch('shared_ebay.client.ensure_valid_token', return_value=True)
+    @patch('shared_ebay.client.get_token_manager', return_value=_mock_token_manager())
     @patch('shared_ebay.client.requests.get')
     def test_estimate_import_charges_international(self, mock_get, mock_token):
         """Should estimate 10% import charges for international items without explicit charges"""
@@ -165,7 +174,7 @@ class TestImportCharges(unittest.TestCase):
         # Should be 10% of (item + shipping) = 10% of 120 = 12.0
         self.assertEqual(listing.import_charges, 12.0)
 
-    @patch('shared_ebay.client.ensure_valid_token', return_value=True)
+    @patch('shared_ebay.client.get_token_manager', return_value=_mock_token_manager())
     @patch('shared_ebay.client.requests.get')
     def test_no_import_charges_domestic(self, mock_get, mock_token):
         """Should not add import charges for US domestic items"""
@@ -192,7 +201,7 @@ class TestSalesTax(unittest.TestCase):
         os.environ['EBAY_CLIENT_SECRET'] = 'test-secret'
         os.environ['EBAY_USER_TOKEN'] = 'test-token'
 
-    @patch('shared_ebay.client.ensure_valid_token', return_value=True)
+    @patch('shared_ebay.client.get_token_manager', return_value=_mock_token_manager())
     @patch('shared_ebay.client.requests.get')
     def test_sales_tax_calculation_with_rate(self, mock_get, mock_token):
         """Should calculate sales tax when SALES_TAX_RATE is set"""
@@ -217,7 +226,7 @@ class TestSalesTax(unittest.TestCase):
         # Total price = item + tax = $110
         self.assertEqual(listing.price, 110.0)
 
-    @patch('shared_ebay.client.ensure_valid_token', return_value=True)
+    @patch('shared_ebay.client.get_token_manager', return_value=_mock_token_manager())
     @patch('shared_ebay.client.requests.get')
     def test_sales_tax_default_zero(self, mock_get, mock_token):
         """Should default to 0.0 sales tax when SALES_TAX_RATE not set"""
@@ -254,7 +263,7 @@ class TestPriceCalculation(unittest.TestCase):
         # Clear cached config to reload with new tax rate
         config_module._config.clear()
 
-    @patch('shared_ebay.client.ensure_valid_token', return_value=True)
+    @patch('shared_ebay.client.get_token_manager', return_value=_mock_token_manager())
     @patch('shared_ebay.client.requests.get')
     def test_total_price_all_components(self, mock_get, mock_token):
         """Should calculate total price = item + shipping + import + tax"""
@@ -292,7 +301,7 @@ class TestReturnPolicyExtraction(unittest.TestCase):
         os.environ['EBAY_CLIENT_SECRET'] = 'test-secret'
         os.environ['EBAY_USER_TOKEN'] = 'test-token'
 
-    @patch('shared_ebay.client.ensure_valid_token', return_value=True)
+    @patch('shared_ebay.client.get_token_manager', return_value=_mock_token_manager())
     @patch('shared_ebay.client.requests.get')
     def test_extract_return_policy_accepted(self, mock_get, mock_token):
         """Should extract return policy when returns accepted"""
@@ -316,7 +325,7 @@ class TestReturnPolicyExtraction(unittest.TestCase):
         self.assertEqual(listing.return_period, '30 days')
         self.assertEqual(listing.return_policy_text, 'Returns accepted (30 days)')
 
-    @patch('shared_ebay.client.ensure_valid_token', return_value=True)
+    @patch('shared_ebay.client.get_token_manager', return_value=_mock_token_manager())
     @patch('shared_ebay.client.requests.get')
     def test_extract_return_policy_not_accepted(self, mock_get, mock_token):
         """Should handle no returns accepted"""
@@ -347,7 +356,7 @@ class TestAdditionalImages(unittest.TestCase):
         os.environ['EBAY_CLIENT_SECRET'] = 'test-secret'
         os.environ['EBAY_USER_TOKEN'] = 'test-token'
 
-    @patch('shared_ebay.client.ensure_valid_token', return_value=True)
+    @patch('shared_ebay.client.get_token_manager', return_value=_mock_token_manager())
     @patch('shared_ebay.client.requests.get')
     def test_extract_multiple_images(self, mock_get, mock_token):
         """Should extract main image and additional images"""
@@ -373,7 +382,7 @@ class TestAdditionalImages(unittest.TestCase):
         self.assertIn('http://example.com/main.jpg', listing.images)
         self.assertIn('http://example.com/img1.jpg', listing.images)
 
-    @patch('shared_ebay.client.ensure_valid_token', return_value=True)
+    @patch('shared_ebay.client.get_token_manager', return_value=_mock_token_manager())
     @patch('shared_ebay.client.requests.get')
     def test_limit_images_to_24(self, mock_get, mock_token):
         """Should limit images to 24 maximum"""
@@ -405,7 +414,7 @@ class TestItemGroupHandling(unittest.TestCase):
         os.environ['EBAY_CLIENT_SECRET'] = 'test-secret'
         os.environ['EBAY_USER_TOKEN'] = 'test-token'
 
-    @patch('shared_ebay.client.ensure_valid_token', return_value=True)
+    @patch('shared_ebay.client.get_token_manager', return_value=_mock_token_manager())
     @patch('shared_ebay.client.requests.get')
     def test_detect_and_handle_item_group(self, mock_get, mock_token):
         """Should detect error 11006 and call _get_item_group_details"""

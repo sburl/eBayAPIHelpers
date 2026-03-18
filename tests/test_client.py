@@ -17,7 +17,17 @@ from shared_ebay.client import (
 )
 
 
-@patch('shared_ebay.client.ensure_valid_token')
+def _mock_token_manager():
+    """Create a mock TokenManager that always returns a valid token."""
+    mock_tm = MagicMock()
+    mock_tm.ensure_valid_token.return_value = True
+    mock_tm.needs_refresh.return_value = False
+    mock_tm.get_current_token.return_value = "test-token"
+    mock_tm.token_refreshed_at = None
+    return mock_tm
+
+
+@patch('shared_ebay.client.get_token_manager')
 @patch('shared_ebay.config.load_dotenv')
 @patch('dotenv.load_dotenv')
 class TesteBayClient(unittest.TestCase):
@@ -31,41 +41,40 @@ class TesteBayClient(unittest.TestCase):
         os.environ.clear()
         os.environ.update(self._original_env)
 
-    def test_client_initialization(self, mock_dotenv_load, mock_config_load, mock_ensure):
-        mock_ensure.return_value = True
+    def test_client_initialization(self, mock_dotenv_load, mock_config_load, mock_get_tm):
+        mock_get_tm.return_value = _mock_token_manager()
 
         client = eBayClient()
 
         self.assertIsNotNone(client.config)
         self.assertEqual(client.user_token, "test-token")
-        mock_ensure.assert_called_once()
 
-    def test_extract_item_id_from_url_standard(self, mock_dotenv_load, mock_config_load, mock_ensure):
-        mock_ensure.return_value = True
+    def test_extract_item_id_from_url_standard(self, mock_dotenv_load, mock_config_load, mock_get_tm):
+        mock_get_tm.return_value = _mock_token_manager()
         client = eBayClient()
 
         # Standard eBay URL
         item_id = client.extract_item_id_from_url("https://www.ebay.com/itm/123456789")
         self.assertEqual(item_id, "123456789")
 
-    def test_extract_item_id_from_url_with_title(self, mock_dotenv_load, mock_config_load, mock_ensure):
-        mock_ensure.return_value = True
+    def test_extract_item_id_from_url_with_title(self, mock_dotenv_load, mock_config_load, mock_get_tm):
+        mock_get_tm.return_value = _mock_token_manager()
         client = eBayClient()
 
         # URL with title
         item_id = client.extract_item_id_from_url("https://www.ebay.com/itm/product-title/123456789")
         self.assertEqual(item_id, "123456789")
 
-    def test_extract_item_id_from_url_with_query_params(self, mock_dotenv_load, mock_config_load, mock_ensure):
-        mock_ensure.return_value = True
+    def test_extract_item_id_from_url_with_query_params(self, mock_dotenv_load, mock_config_load, mock_get_tm):
+        mock_get_tm.return_value = _mock_token_manager()
         client = eBayClient()
 
         # URL with query parameters
         item_id = client.extract_item_id_from_url("https://www.ebay.com/itm/123456789?hash=item123")
         self.assertEqual(item_id, "123456789")
 
-    def test_extract_item_id_invalid_url(self, mock_dotenv_load, mock_config_load, mock_ensure):
-        mock_ensure.return_value = True
+    def test_extract_item_id_invalid_url(self, mock_dotenv_load, mock_config_load, mock_get_tm):
+        mock_get_tm.return_value = _mock_token_manager()
         client = eBayClient()
 
         # Invalid URLs
@@ -74,8 +83,8 @@ class TesteBayClient(unittest.TestCase):
         self.assertIsNone(client.extract_item_id_from_url("https://www.ebay.com/other"))
 
     @patch('shared_ebay.client.requests.get')
-    def test_get_item_details_success(self, mock_get, mock_dotenv_load, mock_config_load, mock_ensure):
-        mock_ensure.return_value = True
+    def test_get_item_details_success(self, mock_get, mock_dotenv_load, mock_config_load, mock_get_tm):
+        mock_get_tm.return_value = _mock_token_manager()
 
         # Mock successful API response
         mock_response = MagicMock()
@@ -91,8 +100,8 @@ class TesteBayClient(unittest.TestCase):
         mock_get.assert_called_once()
 
     @patch('shared_ebay.client.requests.get')
-    def test_get_item_details_404_not_found(self, mock_get, mock_dotenv_load, mock_config_load, mock_ensure):
-        mock_ensure.return_value = True
+    def test_get_item_details_404_not_found(self, mock_get, mock_dotenv_load, mock_config_load, mock_get_tm):
+        mock_get_tm.return_value = _mock_token_manager()
 
         # Mock 404 response
         mock_response = MagicMock()
@@ -105,10 +114,11 @@ class TesteBayClient(unittest.TestCase):
             client.get_item_details("123456789")
 
     @patch('shared_ebay.client.requests.get')
-    def test_get_item_details_401_unauthorized(self, mock_get, mock_dotenv_load, mock_config_load, mock_ensure):
-        mock_ensure.return_value = True
+    def test_get_item_details_401_unauthorized(self, mock_get, mock_dotenv_load, mock_config_load, mock_get_tm):
+        mock_tm = _mock_token_manager()
+        mock_get_tm.return_value = mock_tm
 
-        # Mock 401 response
+        # Mock 401 response for all attempts (including after refresh)
         mock_response = MagicMock()
         mock_response.status_code = 401
         mock_get.return_value = mock_response
@@ -118,10 +128,33 @@ class TesteBayClient(unittest.TestCase):
         with self.assertRaises(UnauthorizedError):
             client.get_item_details("123456789")
 
+        # Should have tried refresh once before giving up
+        self.assertEqual(mock_get.call_count, 2)  # Original + retry after refresh
+
+    @patch('shared_ebay.client.requests.get')
+    def test_get_item_details_401_refresh_fails_raises_unauthorized(self, mock_get, mock_dotenv_load, mock_config_load, mock_get_tm):
+        mock_tm = _mock_token_manager()
+        # First ensure_valid_token succeeds (init), second fails (401 refresh attempt)
+        mock_tm.ensure_valid_token.side_effect = [True, False]
+        mock_get_tm.return_value = mock_tm
+
+        mock_response = MagicMock()
+        mock_response.status_code = 401
+        mock_get.return_value = mock_response
+
+        client = eBayClient()
+
+        # Should raise UnauthorizedError, not APIError
+        with self.assertRaises(UnauthorizedError):
+            client.get_item_details("123456789")
+
+        # Only 1 API call — refresh failed before retry
+        self.assertEqual(mock_get.call_count, 1)
+
     @patch('shared_ebay.client.requests.get')
     @patch('shared_ebay.client.time.sleep')
-    def test_get_item_details_429_rate_limit_with_retry(self, mock_sleep, mock_get, mock_dotenv_load, mock_config_load, mock_ensure):
-        mock_ensure.return_value = True
+    def test_get_item_details_429_rate_limit_with_retry(self, mock_sleep, mock_get, mock_dotenv_load, mock_config_load, mock_get_tm):
+        mock_get_tm.return_value = _mock_token_manager()
 
         # Mock 429 responses then success
         mock_response_429 = MagicMock()
@@ -142,8 +175,8 @@ class TesteBayClient(unittest.TestCase):
 
     @patch('shared_ebay.client.requests.get')
     @patch('shared_ebay.client.time.sleep')
-    def test_get_item_details_429_rate_limit_exhausted(self, mock_sleep, mock_get, mock_dotenv_load, mock_config_load, mock_ensure):
-        mock_ensure.return_value = True
+    def test_get_item_details_429_rate_limit_exhausted(self, mock_sleep, mock_get, mock_dotenv_load, mock_config_load, mock_get_tm):
+        mock_get_tm.return_value = _mock_token_manager()
 
         # Mock 429 for all retries
         mock_response = MagicMock()
@@ -160,8 +193,8 @@ class TesteBayClient(unittest.TestCase):
 
     @patch('shared_ebay.client.requests.get')
     @patch('shared_ebay.client.time.sleep')
-    def test_get_item_details_500_server_error_with_retry(self, mock_sleep, mock_get, mock_dotenv_load, mock_config_load, mock_ensure):
-        mock_ensure.return_value = True
+    def test_get_item_details_500_server_error_with_retry(self, mock_sleep, mock_get, mock_dotenv_load, mock_config_load, mock_get_tm):
+        mock_get_tm.return_value = _mock_token_manager()
 
         # Mock 500 error then success
         mock_response_500 = MagicMock()
@@ -182,8 +215,8 @@ class TesteBayClient(unittest.TestCase):
 
     @patch('shared_ebay.client.requests.get')
     @patch('shared_ebay.client.time.sleep')
-    def test_get_item_details_500_exhausted_retries(self, mock_sleep, mock_get, mock_dotenv_load, mock_config_load, mock_ensure):
-        mock_ensure.return_value = True
+    def test_get_item_details_500_exhausted_retries(self, mock_sleep, mock_get, mock_dotenv_load, mock_config_load, mock_get_tm):
+        mock_get_tm.return_value = _mock_token_manager()
 
         # Mock 500 for all retries
         mock_response = MagicMock()
@@ -200,8 +233,8 @@ class TesteBayClient(unittest.TestCase):
 
     @patch('shared_ebay.client.requests.get')
     @patch('shared_ebay.client.time.sleep')
-    def test_get_item_details_network_error_with_retry(self, mock_sleep, mock_get, mock_dotenv_load, mock_config_load, mock_ensure):
-        mock_ensure.return_value = True
+    def test_get_item_details_network_error_with_retry(self, mock_sleep, mock_get, mock_dotenv_load, mock_config_load, mock_get_tm):
+        mock_get_tm.return_value = _mock_token_manager()
         import requests
 
         # Mock network error then success
@@ -223,8 +256,8 @@ class TesteBayClient(unittest.TestCase):
 
     @patch('shared_ebay.client.requests.get')
     @patch('shared_ebay.client.time.sleep')
-    def test_get_item_details_timeout_with_retry(self, mock_sleep, mock_get, mock_dotenv_load, mock_config_load, mock_ensure):
-        mock_ensure.return_value = True
+    def test_get_item_details_timeout_with_retry(self, mock_sleep, mock_get, mock_dotenv_load, mock_config_load, mock_get_tm):
+        mock_get_tm.return_value = _mock_token_manager()
         import requests
 
         # Mock timeout then success
@@ -244,8 +277,8 @@ class TesteBayClient(unittest.TestCase):
         self.assertEqual(mock_get.call_count, 2)
 
     @patch('shared_ebay.client.requests.get')
-    def test_get_item_details_400_bad_request(self, mock_get, mock_dotenv_load, mock_config_load, mock_ensure):
-        mock_ensure.return_value = True
+    def test_get_item_details_400_bad_request(self, mock_get, mock_dotenv_load, mock_config_load, mock_get_tm):
+        mock_get_tm.return_value = _mock_token_manager()
 
         # Mock 400 response
         mock_response = MagicMock()
@@ -261,8 +294,8 @@ class TesteBayClient(unittest.TestCase):
         self.assertIn("400", str(context.exception))
 
     @patch.object(eBayClient, 'get_item_details')
-    def test_fetch_listing_data_success(self, mock_get_details, mock_dotenv_load, mock_config_load, mock_ensure):
-        mock_ensure.return_value = True
+    def test_fetch_listing_data_success(self, mock_get_details, mock_dotenv_load, mock_config_load, mock_get_tm):
+        mock_get_tm.return_value = _mock_token_manager()
 
         # Mock item data
         mock_get_details.return_value = {
@@ -286,8 +319,8 @@ class TesteBayClient(unittest.TestCase):
         self.assertEqual(listing.brand, 'TestBrand')
 
     @patch.object(eBayClient, 'get_item_details')
-    def test_fetch_listing_data_item_not_found(self, mock_get_details, mock_dotenv_load, mock_config_load, mock_ensure):
-        mock_ensure.return_value = True
+    def test_fetch_listing_data_item_not_found(self, mock_get_details, mock_dotenv_load, mock_config_load, mock_get_tm):
+        mock_get_tm.return_value = _mock_token_manager()
         mock_get_details.side_effect = ItemNotFoundError("Item not found")
 
         client = eBayClient()
@@ -295,8 +328,8 @@ class TesteBayClient(unittest.TestCase):
         with self.assertRaises(ItemNotFoundError):
             client.fetch_listing_data("https://www.ebay.com/itm/123456789")
 
-    def test_fetch_listing_data_invalid_url(self, mock_dotenv_load, mock_config_load, mock_ensure):
-        mock_ensure.return_value = True
+    def test_fetch_listing_data_invalid_url(self, mock_dotenv_load, mock_config_load, mock_get_tm):
+        mock_get_tm.return_value = _mock_token_manager()
 
         client = eBayClient()
         listing = client.fetch_listing_data("https://google.com")
