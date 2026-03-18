@@ -26,6 +26,7 @@ Usage:
 """
 import os
 import base64
+import time
 import requests
 import logging
 from datetime import datetime, timedelta
@@ -45,12 +46,16 @@ class TokenStatus(Enum):
 load_dotenv()
 logger = logging.getLogger(__name__)
 
-# Access token lifetime and refresh threshold (seconds)
-TOKEN_LIFETIME = 7200       # 2 hours
-REFRESH_THRESHOLD = 5400    # 1.5 hours (refresh proactively at 75%)
+# Proactive refresh threshold (seconds). Tokens are refreshed before this age
+# to avoid mid-request expiry. eBay access tokens last 7200s (2 hours).
+REFRESH_THRESHOLD = 5400    # 1.5 hours (75% of lifetime)
 
 class TokenManager:
-    """Manages eBay OAuth tokens with automatic refresh"""
+    """Manages eBay OAuth tokens with automatic refresh.
+
+    This is the single source of truth for token lifecycle. eBayClient
+    delegates all refresh decisions here via ensure_valid_token().
+    """
 
     def __init__(self, suffix: str = ""):
         self.suffix = suffix
@@ -82,18 +87,15 @@ class TokenManager:
             return None
         return (datetime.now() - self.token_refreshed_at).total_seconds()
 
-    def _is_token_fresh(self) -> bool:
-        """Check if the token is known to be fresh (refreshed within threshold)."""
-        age = self._token_age_seconds()
-        if age is None:
-            return False  # Unknown age — need to verify
-        return age < REFRESH_THRESHOLD
+    def needs_refresh(self) -> bool:
+        """Check if the token needs refreshing (past threshold or unknown age).
 
-    def _needs_proactive_refresh(self) -> bool:
-        """Check if the token is past the proactive refresh threshold."""
+        Used by eBayClient to decide whether to call ensure_valid_token()
+        before API calls, avoiding duplicate refresh logic.
+        """
         age = self._token_age_seconds()
         if age is None:
-            return False  # Unknown — don't proactively refresh, verify first
+            return True  # Unknown age — needs verification
         return age >= REFRESH_THRESHOLD
 
     def get_current_token(self) -> Optional[str]:
@@ -138,7 +140,7 @@ class TokenManager:
     def refresh_access_token(self, refresh_token: str) -> Optional[dict]:
         """Use refresh token to get a new access token.
 
-        Retries once on transient network errors.
+        Retries once on transient network errors with a 2-second backoff.
         """
         if not self.config.ebay_app_id or not self.config.ebay_client_secret:
             logger.error("EBAY_APP_ID or EBAY_CLIENT_SECRET not configured")
@@ -181,10 +183,14 @@ class TokenManager:
             except requests.exceptions.ConnectionError as e:
                 last_error = e
                 logger.warning(f"Refresh attempt {attempt + 1} failed (connection error): {e}")
+                if attempt == 0:
+                    time.sleep(2)
                 continue
             except requests.exceptions.Timeout as e:
                 last_error = e
                 logger.warning(f"Refresh attempt {attempt + 1} failed (timeout): {e}")
+                if attempt == 0:
+                    time.sleep(2)
                 continue
             except Exception as e:
                 # Non-transient error (e.g. 400 invalid refresh token) — don't retry
@@ -224,6 +230,7 @@ class TokenManager:
             if verbose: print("✓ Token refreshed successfully!")
             return True
 
+        if verbose: print("❌ Failed to save refreshed token")
         return False
 
     def ensure_valid_token(self, verbose: bool = True) -> bool:
@@ -244,11 +251,11 @@ class TokenManager:
             return False
 
         # Fast path: token was refreshed recently, skip API test
-        if self._is_token_fresh():
+        if not self.needs_refresh():
             return True
 
-        # Proactive refresh: token is approaching expiry
-        if self._needs_proactive_refresh():
+        # If we have a timestamp and it's past threshold, proactively refresh
+        if self.token_refreshed_at is not None:
             if verbose: print(f"⚠️  Token approaching expiry, refreshing proactively...")
             return self._do_refresh(verbose)
 
@@ -256,14 +263,17 @@ class TokenManager:
         status, error = self.test_token_validity(current_token)
 
         if status == TokenStatus.VALID:
-            # Token is valid — record the time so we don't test again soon.
-            # Use half the threshold since we don't know the actual age.
+            # Token is valid now but we don't know its actual age. Set timestamp
+            # to half-threshold ago so we'll re-check in ~45 min rather than
+            # assuming it's fresh for the full 90 min (it could be close to expiry).
             self.token_refreshed_at = datetime.now() - timedelta(seconds=REFRESH_THRESHOLD / 2)
             return True
 
         if status == TokenStatus.UNKNOWN:
-            # Network error — assume token might be valid to avoid unnecessary refresh
+            # Network error — assume token might be valid. Set timestamp so we
+            # don't hit the API test again immediately on the next call.
             if verbose: print(f"⚠️  Unable to verify token (network error), assuming valid: {error}")
+            self.token_refreshed_at = datetime.now() - timedelta(seconds=REFRESH_THRESHOLD / 2)
             return True
 
         # Token is INVALID — attempt refresh

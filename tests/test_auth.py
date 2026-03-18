@@ -9,7 +9,7 @@ APIHELPERS_SRC = Path(__file__).resolve().parents[1] / "src"
 sys.path.insert(0, str(APIHELPERS_SRC))
 
 from shared_ebay import auth as shared_auth
-from shared_ebay.auth import TokenStatus, REFRESH_THRESHOLD, TOKEN_LIFETIME
+from shared_ebay.auth import TokenStatus, REFRESH_THRESHOLD
 from shared_ebay.config import Config
 
 
@@ -227,30 +227,20 @@ class TestTokenManager(unittest.TestCase):
 
     # --- Token freshness tests ---
 
-    def test_is_token_fresh_when_just_refreshed(self):
+    def test_needs_refresh_when_just_refreshed(self):
         manager = shared_auth.TokenManager()
         manager.token_refreshed_at = datetime.now()
-        self.assertTrue(manager._is_token_fresh())
+        self.assertFalse(manager.needs_refresh())
 
-    def test_is_token_fresh_when_old(self):
+    def test_needs_refresh_when_old(self):
         manager = shared_auth.TokenManager()
         manager.token_refreshed_at = datetime.now() - timedelta(seconds=REFRESH_THRESHOLD + 100)
-        self.assertFalse(manager._is_token_fresh())
+        self.assertTrue(manager.needs_refresh())
 
-    def test_is_token_fresh_when_unknown(self):
+    def test_needs_refresh_when_unknown(self):
         manager = shared_auth.TokenManager()
         manager.token_refreshed_at = None
-        self.assertFalse(manager._is_token_fresh())
-
-    def test_needs_proactive_refresh_when_approaching_expiry(self):
-        manager = shared_auth.TokenManager()
-        manager.token_refreshed_at = datetime.now() - timedelta(seconds=REFRESH_THRESHOLD + 100)
-        self.assertTrue(manager._needs_proactive_refresh())
-
-    def test_needs_proactive_refresh_when_fresh(self):
-        manager = shared_auth.TokenManager()
-        manager.token_refreshed_at = datetime.now()
-        self.assertFalse(manager._needs_proactive_refresh())
+        self.assertTrue(manager.needs_refresh())
 
     # --- ensure_valid_token with local tracking ---
 
@@ -281,7 +271,7 @@ class TestTokenManager(unittest.TestCase):
     @patch.object(shared_auth.TokenManager, 'get_current_token')
     @patch.object(shared_auth.TokenManager, '_do_refresh')
     def test_ensure_valid_token_proactive_refresh_when_old(self, mock_do_refresh, mock_get_current_token):
-        """When token is past threshold, proactively refresh without API test."""
+        """When token is past threshold and has a known timestamp, proactively refresh."""
         mock_get_current_token.return_value = "old-token"
         mock_do_refresh.return_value = True
 
@@ -314,6 +304,7 @@ class TestTokenManager(unittest.TestCase):
     @patch.object(shared_auth.TokenManager, 'test_token_validity')
     def test_ensure_valid_token_unknown_status(self, mock_test_validity, mock_get_current_token):
         # When status is UNKNOWN (network error), should return True (conservative)
+        # and set timestamp to avoid hitting the API test again immediately
         mock_get_current_token.return_value = "token"
         mock_test_validity.return_value = (TokenStatus.UNKNOWN, "Network error")
 
@@ -321,6 +312,7 @@ class TestTokenManager(unittest.TestCase):
         result = manager.ensure_valid_token(verbose=False)
 
         self.assertTrue(result)  # Assumes token might be valid
+        self.assertIsNotNone(manager.token_refreshed_at)  # Timestamp set
 
     @patch.object(shared_auth.TokenManager, 'get_current_token')
     @patch.object(shared_auth.TokenManager, 'test_token_validity')
