@@ -162,25 +162,20 @@ class TokenManager:
             'Authorization': f'Basic {b64_credentials}'
         }
 
-        # Standard scopes — override via EBAY_OAUTH_SCOPES env var if the app
-        # only has a subset approved in the OAuth consent flow.
-        scopes_env = os.getenv(self._env_key('EBAY_OAUTH_SCOPES'), '')
-        if scopes_env.strip():
-            scopes = scopes_env.strip().split()
-        else:
-            scopes = [
-                'https://api.ebay.com/oauth/api_scope',
-                'https://api.ebay.com/oauth/api_scope/buy.order',
-                'https://api.ebay.com/oauth/api_scope/sell.marketing.readonly',
-                'https://api.ebay.com/oauth/api_scope/sell.inventory.readonly',
-                'https://api.ebay.com/oauth/api_scope/sell.account.readonly',
-            ]
-
         data = {
             'grant_type': 'refresh_token',
             'refresh_token': refresh_token,
-            'scope': ' '.join(scopes)
         }
+
+        # RFC 6749 §6: `scope` is optional on a refresh, and omitting it returns
+        # the scopes originally granted. An explicit list can only narrow or
+        # over-request, and over-requesting fails the entire refresh with an
+        # opaque `invalid_scope` 400 — which is what a hardcoded default
+        # containing buy.order did to every app never granted it.
+        # Send a scope only when a caller opts in deliberately.
+        scopes_env = os.getenv(self._env_key('EBAY_OAUTH_SCOPES'), '')
+        if scopes_env.strip():
+            data['scope'] = ' '.join(scopes_env.strip().split())
 
         last_error = None
         for attempt in range(2):  # Try twice for transient errors
