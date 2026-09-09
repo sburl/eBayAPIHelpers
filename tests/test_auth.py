@@ -131,6 +131,46 @@ class TestTokenManager(unittest.TestCase):
         mock_post.assert_called_once()
 
     @patch('shared_ebay.auth.requests.post')
+    def test_refresh_omits_scope_by_default(self, mock_post):
+        """No `scope` on a refresh: eBay then returns the originally granted set.
+
+        A hardcoded default previously sent buy.order, which eBay rejects with
+        `invalid_scope` (400) for any app never granted it — failing the whole
+        refresh rather than just dropping the extra scope.
+        """
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {'access_token': 'a', 'expires_in': 7200}
+        mock_post.return_value = mock_response
+
+        manager = shared_auth.TokenManager()
+        manager.refresh_access_token("refresh-token")
+
+        sent = mock_post.call_args.kwargs['data']
+        self.assertNotIn('scope', sent)
+        self.assertEqual('refresh_token', sent['grant_type'])
+        self.assertEqual('refresh-token', sent['refresh_token'])
+
+    @patch.dict(os.environ, {'EBAY_OAUTH_SCOPES': 'https://api.ebay.com/oauth/api_scope   https://api.ebay.com/oauth/api_scope/sell.inventory.readonly'})
+    @patch('shared_ebay.auth.requests.post')
+    def test_refresh_sends_scope_when_explicitly_configured(self, mock_post):
+        """EBAY_OAUTH_SCOPES remains an opt-in override, normalised to single spaces."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {'access_token': 'a', 'expires_in': 7200}
+        mock_post.return_value = mock_response
+
+        manager = shared_auth.TokenManager()
+        manager.refresh_access_token("refresh-token")
+
+        sent = mock_post.call_args.kwargs['data']
+        self.assertEqual(
+            'https://api.ebay.com/oauth/api_scope '
+            'https://api.ebay.com/oauth/api_scope/sell.inventory.readonly',
+            sent['scope'],
+        )
+
+    @patch('shared_ebay.auth.requests.post')
     def test_refresh_access_token_invalid_refresh_token(self, mock_post):
         # Mock 400 bad request (invalid refresh token) — should NOT retry
         mock_response = MagicMock()
